@@ -1,4 +1,3 @@
-cat > Dockerfile << 'EOF'
 FROM python:3.12-slim
 
 ENV PIP_NO_CACHE_DIR=1 \
@@ -22,4 +21,3 @@ COPY app.py /app/app.py
 
 EXPOSE 8010
 CMD ["uvicorn","app:app","--host","0.0.0.0","--port","8010"]
-EOF

@@ -1,8 +1,6 @@
-cat > .dockerignore << 'EOF'
 venv
 __pycache__/
 *.pyc
 .git
 .gitignore
-EOF
 
