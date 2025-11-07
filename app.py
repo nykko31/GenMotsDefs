@@ -1,68 +1,89 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 import spacy
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List
 
 app = FastAPI()
 
-# Chargement du modèle FR
-nlp = spacy.load("fr_core_news_md")
+# Charger le modèle une fois au démarrage
+try:
+    nlp = spacy.load("fr_core_news_md")
+except Exception as e:
+    raise RuntimeError(f"Erreur de chargement Spacy : {e}")
 
-# ---------- MODELES ----------
+# ----------- HEALTHCHECK -----------
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+# ----------- MODELES Pydantic -----------
 
 class PairInput(BaseModel):
-    word1: str
-    word2: str
+    word1: str = Field(..., description="Premier mot")
+    word2: str = Field(..., description="Second mot")
 
 class BatchInput(BaseModel):
-    word: str
-    candidates: List[str]
+    pairs: list[PairInput] = Field(..., description="Liste de couples de mots")
 
 class FilterInput(BaseModel):
-    validated: List[str]
-    candidates: List[str]
-    threshold: float = 0.80   # limite similarité par défaut
+    word: str
+    candidates: list[str]
 
 
-# ---------- ENDPOINTS ----------
+# ----------- SIMILARITÉ (GET + POST) -----------
+
+@app.get("/similarity")
+def similarity_get(word1: str, word2: str):
+    try:
+        score = nlp(word1).similarity(nlp(word2))
+        return {"word1": word1, "word2": word2, "similarity": score}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/similarity")
-def similarity(data: PairInput):
-    v1 = nlp(data.word1)
-    v2 = nlp(data.word2)
-    return {"similarity": v1.similarity(v2)}
+def similarity_post(data: PairInput):
+    try:
+        score = nlp(data.word1).similarity(nlp(data.word2))
+        return {"word1": data.word1, "word2": data.word2, "similarity": score}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+
+# ----------- BATCH SIMILARITY -----------
 
 @app.post("/batch_similarity")
 def batch_similarity(data: BatchInput):
-    w = nlp(data.word)
-    out = []
-    for c in data.candidates:
-        score = w.similarity(nlp(c))
-        out.append({"candidate": c, "similarity": score})
-    return out
+    try:
+        results = []
+        for pair in data.pairs:
+            score = nlp(pair.word1).similarity(nlp(pair.word2))
+            results.append({
+                "word1": pair.word1,
+                "word2": pair.word2,
+                "similarity": score
+            })
+        return {"results": results}
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ----------- FILTRAGE DE CANDIDATS -----------
 
 @app.post("/filter_candidates")
 def filter_candidates(data: FilterInput):
-    """
-    Retire les candidats trop proches de l’un des mots validés.
-    """
-    validated_vecs = [nlp(v) for v in data.validated]
-    kept = []
-    removed = []
+    try:
+        target = nlp(data.word)
+        output = []
 
-    for c in data.candidates:
-        vc = nlp(c)
-        max_sim = max((vc.similarity(v) for v in validated_vecs), default=0.0)
+        for cand in data.candidates:
+            sim = target.similarity(nlp(cand))
+            output.append({"candidate": cand, "similarity": sim})
 
-        if max_sim >= data.threshold:
-            removed.append({"mot": c, "similarity": max_sim})
-        else:
-            kept.append(c)
+        output = sorted(output, key=lambda x: x["similarity"], reverse=True)
 
-    return {
-        "kept": kept,
-        "removed": removed,
-        "threshold": data.threshold
-    }
+        return {"word": data.word, "ranked_candidates": output}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
